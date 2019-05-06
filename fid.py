@@ -22,6 +22,7 @@ import os
 import gzip, pickle
 import tensorflow as tf
 from scipy.misc import imread
+from scipy.misc import imresize
 from scipy import linalg
 import pathlib
 import urllib
@@ -106,7 +107,7 @@ def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
     and X_2 ~ N(mu_2, C_2) is
             d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-            
+
     Stable version by Dougal J. Sutherland.
 
     Params:
@@ -172,11 +173,12 @@ def calculate_activation_statistics(images, sess, batch_size=50, verbose=False):
     -- sigma : The covariance matrix of the activations of the pool_3 layer of
                the incption model.
     """
+
     act = get_activations(images, sess, batch_size, verbose)
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
     return mu, sigma
-    
+
 
 #------------------
 # The following methods are implemented to obtain a batched version of the activations.
@@ -228,7 +230,7 @@ def get_activations_from_files(files, sess, batch_size=50, verbose=False):
     if verbose:
         print(" done")
     return pred_arr
-    
+
 def calculate_activation_statistics_from_files(files, sess, batch_size=50, verbose=False):
     """Calculation of the statistics used by the FID.
     Params:
@@ -248,7 +250,7 @@ def calculate_activation_statistics_from_files(files, sess, batch_size=50, verbo
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
     return mu, sigma
-    
+
 #-------------------------------------------------------------------------------
 
 
@@ -267,9 +269,9 @@ def check_or_download_inception(inception_path):
     model_file = inception_path / 'classify_image_graph_def.pb'
     if not model_file.exists():
         print("Downloading Inception model")
-        from urllib import request
+        import urllib
         import tarfile
-        fn, _ = request.urlretrieve(INCEPTION_URL)
+        fn, _ = urllib.urlretrieve(INCEPTION_URL)
         with tarfile.open(fn, mode='r') as f:
             f.extract('classify_image_graph_def.pb', str(model_file.parent))
     return str(model_file)
@@ -286,7 +288,12 @@ def _handle_path(path, sess, low_profile=False):
         if low_profile:
             m, s = calculate_activation_statistics_from_files(files, sess)
         else:
-            x = np.array([imread(str(fn)).astype(np.float32) for fn in files])
+            x = [imread(str(fn)).astype(np.float32) for fn in files]
+            x = [imresize(im, (128, 128), interp = 'bicubic').astype('float32') for im in x]
+            x = [np.expand_dims(im, axis =3) for im in x if len(im.shape)>2]
+            x = np.concatenate(x, axis=3)
+            x = np.transpose(x, (3, 0, 1, 2))
+            print('images shape: ', x.shape)
             m, s = calculate_activation_statistics(x, sess)
             del x #clean up memory
     return m, s

@@ -12,6 +12,11 @@ from scipy.stats import entropy
 from inception import InceptionV3
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+import os
+import pathlib
+from tqdm import tqdm
+from scipy.misc import imread, imresize
 
 
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -102,6 +107,7 @@ def get_scores(files, model, batch_size=50, dims=8,
 
         # Now compute the mean kl-div
     split_scores = []
+    splits = 8
 
     for k in range(splits):
         part = pred_arr[k * (N // splits): (k+1) * (N // splits), :]

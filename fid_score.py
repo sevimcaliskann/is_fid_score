@@ -9,6 +9,8 @@ import torch
 from scipy import linalg
 from scipy.misc import imread, imresize
 from torch.nn.functional import adaptive_avg_pool2d
+import pickle
+import posixpath
 
 try:
     from tqdm import tqdm
@@ -28,6 +30,8 @@ parser.add_argument('--dims', type=int, default=2048,
                     choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
                     help=('Dimensionality of Inception features to use. '
                           'By default, uses pool3 features'))
+parser.add_argument('--is_classwise', type=int, default=0,
+                    help=('Calculation of fid scores are done by each class or not, if 1, else if 0 no'))
 parser.add_argument('-c', '--gpu', default='', type=str,
                     help='GPU to use (leave blank for CPU only)')
 
@@ -105,7 +109,9 @@ def get_activations(files, model, batch_size=50, dims=2048,
     if verbose:
         print(' done')
 
-    return pred_arr
+    files = [f.as_posix().split('/')[1] for f in files]
+    activation_dict = dict(zip(files[:n_used_imgs], pred_arr))
+    return pred_arr, activation_dict
 
 
 def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
@@ -166,7 +172,7 @@ def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
 
 def calculate_activation_statistics(files, model, batch_size=50,
-                                    dims=2048, cuda=False, verbose=True):
+                                    dims=2048, cuda=False, verbose=True, is_classwise = False, emos = None):
     """Calculation of the statistics used by the FID.
     Params:
     -- files       : List of image files paths
@@ -184,13 +190,30 @@ def calculate_activation_statistics(files, model, batch_size=50,
     -- sigma : The covariance matrix of the activations of the pool_3 layer of
                the inception model.
     """
-    act = get_activations(files, model, batch_size, dims, cuda, verbose)
-    mu = np.mean(act, axis=0)
-    sigma = np.cov(act, rowvar=False)
+    if not is_classwise:
+        act, _ = get_activations(files, model, batch_size, dims, cuda, verbose)
+        mu = np.mean(act, axis=0)
+        sigma = np.cov(act, rowvar=False)
+    else:
+        _, act_dict = get_activations(files, model, batch_size, dims, cuda, verbose)
+        mu = dict()
+        sigma = dict()
+        for emo in emos:
+            ids = emos[emo]
+            ids = list(set(ids).intersection(set(act_dict.keys())))
+            print('len of ids: ', len(ids))
+            if not ids:
+                continue
+            act = np.array([act_dict[id] for id in ids])
+            m = np.mean(act,axis=0)
+            s = np.cov(act, rowvar=False)
+            mu[emo] = m
+            sigma[emo] = s
     return mu, sigma
 
 
-def _compute_statistics_of_path(path, model, batch_size=50, dims=2048, cuda=True):
+
+def _compute_statistics_of_path(path, model, batch_size=50, dims=2048, cuda=True, is_classwise=False):
     if path.endswith('.npz'):
         f = np.load(path)
         m, s = f['mu'][:], f['sigma'][:]
@@ -198,13 +221,18 @@ def _compute_statistics_of_path(path, model, batch_size=50, dims=2048, cuda=True
     else:
         path = pathlib.Path(path)
         files = list(path.glob('*.jpg')) + list(path.glob('*.png'))
+        emos = None
+        if is_classwise==True:
+            pickle_file= list(path.glob('*.pkl'))
+            emos = pickle.load(open(pickle_file[0].absolute().as_posix(), 'rb'))
+            emos = create_emo_lists(emos)
         m, s = calculate_activation_statistics(files, model, batch_size,
-                                               dims, cuda)
+                                               dims, cuda, is_classwise=is_classwise, emos=emos)
 
     return m, s
 
 
-def calculate_fid_given_paths(paths, batch_size, cuda=True, dims=2048):
+def calculate_fid_given_paths(paths, batch_size, cuda=True, dims=2048, is_classwise=False):
     """Calculates the FID of two paths"""
     for p in paths:
         if not os.path.exists(p):
@@ -217,20 +245,49 @@ def calculate_fid_given_paths(paths, batch_size, cuda=True, dims=2048):
         model.cuda()
 
     m1, s1 = _compute_statistics_of_path(paths[0], model, batch_size,
-                                         dims, cuda)
+                                         dims, cuda, is_classwise)
     m2, s2 = _compute_statistics_of_path(paths[1], model, batch_size,
-                                         dims, cuda)
-    fid_value = calculate_frechet_distance(m1, s1, m2, s2)
+                                         dims, cuda, is_classwise)
+    if is_classwise:
+        emos = set(m1.keys()).intersection(m2.keys())
+        fid_value = dict()
+        for i in emos:
+            fid = calculate_frechet_distance(m1[i], s1[i], m2[i], s2[i])
+            fid_value[i] = fid
+    else:
+        fid_value = calculate_frechet_distance(m1, s1, m2, s2)
 
     return fid_value
+
+def create_emo_lists(emos):
+    max_emo = max(emos.values())
+    min_emo = min(emos.values())
+    emos_ = dict()
+    for i in range(min_emo, max_emo+1):
+        ids = [id for id in emos.keys() if emos[id]==i]
+        if len(ids)>0:
+            emos_[i] = ids
+
+    return emos_
+
 
 
 if __name__ == '__main__':
     args = parser.parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
+
+
     fid_value = calculate_fid_given_paths(args.path,
                                           args.batch_size,
                                           args.gpu != '',
-                                          args.dims)
-    print('FID: ', fid_value)
+                                          args.dims,
+                                          args.is_classwise==1)
+
+    if args.is_classwise==1:
+        labels = {0:'Neutral', 1:'Happy', 2:'Sadness', 3:'Surprise', 4:'Fear', 5:'Disgust', 6:'Anger', 7:'Contempt'}
+        print(fid_value)
+        for i in fid_value.keys():
+            print('for %s, the FID value is %.6f' % (labels[i], fid_value[i]))
+    else:
+        print('FID: ', fid_value)

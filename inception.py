@@ -32,8 +32,8 @@ class InceptionV3(nn.Module):
                  resize_input=True,
                  normalize_input=True,
                  requires_grad=False,
-                 save_dir = '/srv/glusterfs/csevim/datasets/emotione/checkpoints/inception_mood_emo',
-                 load_epoch = 9):
+                 save_dir = '/srv/glusterfs/csevim/datasets/emotione/checkpoints/inception_mood_emo_4d',
+                 load_epoch = 7):
         """Build pretrained InceptionV3
 
         Parameters
@@ -76,12 +76,12 @@ class InceptionV3(nn.Module):
 
 	num_ftrs = self.model.AuxLogits.fc.in_features
         layers = list()
-        layers.append(nn.Linear(in_features=num_ftrs, out_features=3))
+        layers.append(nn.Linear(in_features=num_ftrs, out_features=4))
         layers.append(nn.Hardtanh())
         self.model.AuxLogits.fc = nn.Sequential(*layers)
 
         emo_layers = list()
-        emo_layers.append(nn.Linear(in_features=3, out_features=512))
+        emo_layers.append(nn.Linear(in_features=4, out_features=512))
         emo_layers.append(nn.ReLU())
         emo_layers.append(nn.Linear(in_features=512, out_features=8))
         self.aux_emo_layer = nn.Sequential(*emo_layers)
@@ -89,12 +89,12 @@ class InceptionV3(nn.Module):
 
         num_ftrs = self.model.fc.in_features
         layers = list()
-        layers.append(nn.Linear(in_features=num_ftrs, out_features=3))
+        layers.append(nn.Linear(in_features=num_ftrs, out_features=4))
         layers.append(nn.Hardtanh())
         self.model.fc = nn.Sequential(*layers)
 
         emo_layers = list()
-        emo_layers.append(nn.Linear(in_features=3, out_features=512))
+        emo_layers.append(nn.Linear(in_features=4, out_features=512))
         emo_layers.append(nn.ReLU())
         emo_layers.append(nn.Linear(in_features=512, out_features=8))
         self.emo_layer = nn.Sequential(*emo_layers)
